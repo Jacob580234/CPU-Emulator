@@ -51,6 +51,13 @@ void printBinary(uint64_t num) {
 #define JGE    0x5
 #define JG     0x6
 
+#define LTEQ 0x1
+#define LT   0x2
+#define EQ   0x3
+#define NEQ  0x4
+#define GTEQ 0x5
+#define GT   0x6
+
 #define CALL   0x8
 #define RET    0x9
 #define PUSHQ  0xA
@@ -73,7 +80,6 @@ void printBinary(uint64_t num) {
 #define R13         0x0D
 #define R14         0x0E
 #define NO_REGISTER 0x0F
-
 
 typedef enum: unsigned int { false, true } bool;
 
@@ -103,6 +109,21 @@ typedef struct {
     unsigned int stat : 2;
 } CPU;
 
+typedef struct {
+    int64_t A;
+    int64_t B;
+    int64_t C;
+    int64_t E;
+    int64_t M;
+    int64_t P;
+    int64_t D;
+} val;
+
+typedef struct {
+    int64_t A;
+    int64_t B;
+} reg;
+
 void printCPUState(CPU* cpu) {
     char* registers[] = {
         "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
@@ -113,29 +134,167 @@ void printCPUState(CPU* cpu) {
     for (int i = 0; i < 15; i++) {
         printf("%s: %llX\n", registers[i], cpu->registers[i]);
     }
-    printf("PC: 0x%llX\n", cpu->PC / 2);
+    printf("PC: 0x%llX\n", cpu->PC);
     printf("\nFLAGS:\nZF: %u\nOF: %u\nSF: %u\n", cpu->ZF, cpu->OF, cpu->SF);
     printf("\nSTATUS: 0x%X", cpu->stat+1);
 }
 
-
+/*
 void updatePC(CPU* cpu, FILE* src, unsigned int addr) {
     cpu->PC = addr;
     fseek(src, cpu->PC, SEEK_SET);
 }
+*/
 
 
 // can do spaces and newlines between read bytes, but NOT in between !!
-uint64_t read(CPU* cpu, FILE* src, int bytesToRead) {
+uint64_t read(FILE* src, int bytesToRead, int from) {
     uint64_t result;
 
     char format[8];
     sprintf(format, "%%%dllX", bytesToRead * 2);
+    fseek(src, from * 2, SEEK_SET);
     fscanf(src, format, &result);
 
-    updatePC(cpu, src, cpu->PC + bytesToRead * 2);
-
     return result;
+}
+
+void fetchRegisters(CPU* cpu, FILE* src, reg* reg) {
+    int registers = read(src, 1, cpu->PC + 1);
+    reg->A = registers >> 4;
+    reg->B = registers & 0x0F;
+}
+
+
+int fetch(CPU* cpu, FILE* src, val* val, reg* reg) {
+
+    const int instruction = read(src, 1, cpu->PC);
+    const int ifun  = instruction >> 4;
+
+    switch(ifun) {
+
+        case HALT:
+        case NOP: {
+            val->P = cpu->PC + 1;
+        } break;
+
+        case RRMOVQ: {
+            fetchRegisters(cpu, src, reg);
+            val->P = cpu->PC + 2;
+        } break;
+
+        case IRMOVQ:
+        case RMMOVQ:
+        case MRMOVQ: {
+            fetchRegisters(cpu, src, reg);
+            val->C = read(src, 8, cpu->PC + 2);
+            val->P = cpu->PC + 10;
+        } break;
+
+        case OPQ: {
+            fetchRegisters(cpu, src, reg);
+            val->P = cpu->PC + 2;
+        } break;
+
+        case JXX:
+        case CALL: {
+            val->C = read(src, 8, cpu->PC + 1);
+            val->P = cpu->PC + 9;
+        } break;
+
+        case RET: {
+            val->P = cpu->PC + 1;
+        } break;
+
+        case PUSHQ:
+        case POPQ: {
+            fetchRegisters(cpu, src, reg);
+            val->P = cpu->PC + 2;
+        } break;
+
+        default: cpu->stat = STAT_INS;
+    }
+
+    return instruction;
+}
+
+void decode(CPU* cpu, val* val, reg* reg, int icode) {
+
+    switch (icode) {
+        case RRMOVQ: {
+            val->A = cpu->registers[reg->A];
+        } break;
+
+        case RMMOVQ: {
+            val->A = cpu->registers[reg->A];
+            val->B = cpu->registers[reg->B];
+        } break;
+
+        case MRMOVQ: {
+            val->B = cpu->registers[reg->B];
+        } break;
+
+        case OPQ: {
+            val->A = cpu->registers[reg->A];
+            val->B = cpu->registers[reg->B];
+        } break;
+
+        case CALL: {
+            val->B = cpu->registers[RSP];
+        } break;
+
+        case RET: {
+            val->A = cpu->registers[RSP];
+            val->B = cpu->registers[RSP];
+        } break;
+
+        case PUSHQ: {
+            val->A = cpu->registers[reg->A];
+            val->B = cpu->registers[RSP];
+        } break;
+
+        case POPQ: {
+            val->A = cpu->registers[RSP];
+            val->B = cpu->registers[RSP];
+        } break;
+
+        default: break;
+    }
+}
+
+bool evalCond(CPU* cpu, int icode) {
+    switch (icode) {
+        case LTEQ: return (cpu->SF ^ cpu->OF) | cpu->ZF;
+        case LT:   return cpu->SF ^ cpu->OF;
+        case EQ:   return cpu->ZF;
+        case NEQ:  return ~cpu->ZF;
+        case GTEQ: return ~(cpu->SF ^ cpu->OF);
+        case GT:   return ~(cpu->SF ^ cpu->OF) & ~cpu->ZF;
+
+        default: cpu->stat = STAT_INS; break;
+    }
+}
+
+int execute(CPU* cpu, val* val, int instruction, bool* cond) { // condition
+
+    const int icode = instruction >> 4;
+    const int ifun = instruction & 0x0F;
+    switch (icode) {
+
+        case HALT: {
+            cpu->stat = STAT_HLT;
+        } break;
+
+        case RRMOVQ: {
+            val->E = val->A;
+            if (ifun != 0x0)
+                *cond = evalCond(cpu, ifun);
+        } break;
+
+
+
+
+    }
 }
 
 int main(int argc, char** argv) {
@@ -146,69 +305,18 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
     */
+
     FILE* src = fopen("../example_program.txt", "r");
     CPU cpu;
-    cpu.PC = 0x0;
-    cpu.stat = STAT_AOK;
+    reg reg;
+    val val;
+    bool cond;
 
-    const int instruction = read(&cpu, src, 1);
-    const int ifun  = instruction >> 4;
-    const int icode = instruction & 0x0F;
+    memset(&cpu, 0, sizeof(CPU));
 
-    printCPUState(&cpu);
-
-    switch(ifun) {
-        case HALT: {
-            exit(EXIT_SUCCESS);
-        }
-        case NOP: _sleep(500);
-
-        case RRMOVQ: {
-            int registers = read(&cpu, src, 1);
-        }
-
-        case IRMOVQ: {
-            int registers = read(&cpu, src, 1);
-            assert((registers & 0x0F) == NO_REGISTER);
-            uint64_t value = read(&cpu, src, 8);
-        }
-
-        case RMMOVQ: {
-            int registers = read(&cpu, src, 1);
-            uint64_t displacement = read(&cpu, src, 8);
-        }
-        case MRMOVQ: {
-            int registers = read(&cpu, src, 1);
-            uint64_t displacement = read(&cpu, src, 8);
-        }
-
-        case OPQ: {
-            int registers = read(&cpu, src, 1);
-        }
-
-        case JXX: {
-            uint64_t address = read(&cpu, src, 8);
-        }
-
-        case CALL: {
-            uint64_t address = read(&cpu, src, 8);
-        }
-        case RET: break;
-        case PUSHQ: {
-            int registers = read(&cpu, src, 1);
-            assert(registers >> 4 == NO_REGISTER);
-        }
-        case POPQ: {
-            int registers = read(&cpu, src, 1);
-            assert(registers >> 4 == NO_REGISTER);
-        }
-
-        default: cpu.stat = STAT_INS;
-    }
-
-    int valA, valB, valC, valE, valM, valP;
-    int rA, rB;
-
+    int instruction = fetch(&cpu, src, &val, &reg);
+    decode(&cpu, &val, &reg, instruction >> 4);
+    execute(&cpu, &val, instruction, &cond);
 
     uint8_t memory[65536];
 
