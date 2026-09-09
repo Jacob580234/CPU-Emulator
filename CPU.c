@@ -314,7 +314,7 @@ uint64_t fetchFromMemory(uint8_t* RAM, uint32_t from, int bytesToFetch) {
 
 void writeToMemory(uint8_t* RAM, uint64_t value, uint32_t from) {
     for (int i = 0; i < 8; i++) {
-        RAM[from + i] = (value & (0xFF00000000000000 >> i*8)) >> i*8; // ??
+        RAM[from + i] = (value & (0xFF00000000000000 >> i*8)) >> (7-i)*8; // ??
     }
 }
 
@@ -334,6 +334,10 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
     */
+
+    uint64_t value = 0x123456789ABCDEF;
+    printBinary(value);
+
 
     FILE* src = fopen("../example_program.txt", "r");
     CPU cpu;
