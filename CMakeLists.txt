@@ -3,4 +3,5 @@ project(CPU_Emulator C)
 
 set(CMAKE_C_STANDARD 17)
 
-add_executable(CPU_Emulator main.c)
+add_executable(CPU_Emulator CPU.c
+        CPU.h)
