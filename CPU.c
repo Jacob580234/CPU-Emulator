@@ -22,22 +22,14 @@ void printCPUState(CPU* cpu) {
 
     printf("REGISTERS:\n");
     for (int i = 0; i < 15; i++) {
-        printf("%s: %lld\n", registers[i], cpu->registers[i]);
+        printf("%s: 0x%llX\n", registers[i], cpu->registers[i]);
     }
-    printf("PC: 0x%llX\n", cpu->PC);
+    printf("PC : 0x%llX\n", cpu->PC);
     printf("\nFLAGS:\nZF: %u\nOF: %u\nSF: %u\n", cpu->ZF, cpu->OF, cpu->SF);
     printf("\nSTATUS: 0x%X", cpu->stat+1);
 }
 
-/*
-void updatePC(CPU* cpu, FILE* src, unsigned int addr) {
-    cpu->PC = addr;
-    fseek(src, cpu->PC, SEEK_SET);
-}
-*/
 
-
-// can do spaces and newlines between read bytes, but NOT in between !!
 uint64_t read(FILE* src, uint64_t bytesToRead, uint64_t from) {
     uint64_t result;
 
@@ -49,11 +41,13 @@ uint64_t read(FILE* src, uint64_t bytesToRead, uint64_t from) {
     return result;
 }
 
+
 void fetchRegisters(CPU* cpu, FILE* src, reg* reg) {
     int registers = read(src, 1, cpu->PC + 1);
     reg->A = registers >> 4;
     reg->B = registers & 0x0F;
 }
+
 
 void raiseException(CPU* cpu, int code) {
     cpu->stat = code;
@@ -308,21 +302,110 @@ void execute(CPU* cpu, val* val, int instruction, bool* cond) { // condition
 }
 
 
-uint64_t fetchFromMemory(uint8_t* RAM, uint32_t from, int bytesToFetch) {
-
+uint64_t readFromMemory(uint8_t* RAM, uint64_t from) {
+    uint64_t result = 0;
+    for (int i = 0; i < 8; i++) {
+        result |= (uint64_t)RAM[from + i] << i*8; // little-endian
+    }
+    return result;
 }
 
-void writeToMemory(uint8_t* RAM, uint64_t value, uint32_t from) {
+void writeToMemory(uint8_t* RAM, uint64_t value, uint64_t from) {
     for (int i = 0; i < 8; i++) {
-        RAM[from + i] = (value & (0xFF00000000000000 >> i*8)) >> (7-i)*8; // ??
+        RAM[from + i] = (value >> i*8) & 0xFF; // little-endian
     }
 }
 
-void memory(CPU* cpu, uint8_t* RAM, val* val, int instruction, bool cond) {
+void memory(uint8_t* RAM, val* val, int instruction) {
     switch(instruction) {
         case RMMOVQ: {
             writeToMemory(RAM, val->A, val->E);
         } break;
+
+        case MRMOVQ: {
+            val->M = readFromMemory(RAM, val->E);
+        } break;
+
+        case CALL: {
+            writeToMemory(RAM, val->P, val->E);
+        } break;
+
+        case RET: {
+            val->M = readFromMemory(RAM, val->A);
+        } break;
+
+        case PUSHQ: {
+            writeToMemory(RAM, val->A, val->E);
+        } break;
+
+        case POPQ: {
+            val->M = readFromMemory(RAM, val->A);
+        } break;
+
+        default: break;
+    }
+}
+
+
+void writeback(CPU* cpu, val* val, reg* reg, bool cond, int instruction) {
+
+    int ifun = instruction >> 4;
+
+    switch (ifun) {
+        case RRMOVXX: {
+            if(cond) cpu->registers[reg->B] = val->E;
+        } break;
+
+        case IRMOVQ >> 4: {
+            cpu->registers[reg->B] = val->E;
+        } break;
+
+        case MRMOVQ >> 4: {
+            cpu->registers[reg->A] = val->M;
+        } break;
+
+        case OPQ: {
+            cpu->registers[reg->B] = val->E;
+        } break;
+
+        case CALL >> 4:
+        case RET >> 4:
+        case PUSHQ >> 4: {
+            cpu->registers[RSP] = val->E;
+        } break;
+
+        case POPQ >> 4: {
+            cpu->registers[RSP] = val->E;
+            cpu->registers[reg->A] = val->M;
+        } break;
+
+        default: break;
+    }
+}
+
+void PC(CPU* cpu, val* val, bool cond, int instruction) {
+    int icode = instruction >> 4;
+    switch (icode) {
+        case NOP >> 4:
+        case RRMOVXX:
+        case IRMOVQ >> 4:
+        case RMMOVQ >> 4:
+        case MRMOVQ >> 4:
+        case OPQ:
+        case PUSHQ >> 4:
+        case POPQ >> 4: {
+            cpu->PC = val->P;
+        } break;
+
+        case JXX: {
+            cpu->PC = cond ? val->C : val->P;
+        } break;
+
+        case RET >> 4: {
+            cpu->PC = val->M;
+        } break;
+
+        default: break;
     }
 }
 
@@ -335,9 +418,6 @@ int main(int argc, char** argv) {
     }
     */
 
-    uint64_t value = 0x123456789ABCDEF;
-    printBinary(value);
-
 
     FILE* src = fopen("../example_program.txt", "r");
     CPU cpu;
@@ -348,10 +428,15 @@ int main(int argc, char** argv) {
 
     memset(&cpu, 0, sizeof(CPU));
 
-    int instruction = fetch(&cpu, src, &val, &reg);
-    decode(&cpu, &val, &reg, instruction >> 4);
-    execute(&cpu, &val, instruction, &cond);
-    memory(&cpu, RAM, &val, instruction, cond);
+    do {
+        int instruction = fetch(&cpu, src, &val, &reg);
+        decode(&cpu, &val, &reg, instruction >> 4);
+        execute(&cpu, &val, instruction, &cond);
+        memory(RAM, &val, instruction); // still missing exception for STAT_ADR
+        writeback(&cpu, &val, &reg, cond, instruction);
+        PC(&cpu, &val, cond, instruction);
+    } while (fgetc(src) != EOF);
+
 
     printCPUState(&cpu);
 
