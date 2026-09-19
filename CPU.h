@@ -13,48 +13,48 @@
 #define STAT_INS 0x03 // invalid instruction
 
 
-#define HALT   0x00
-#define NOP    0x10
+#define HALT 0x0
+#define NOP  0x1
 
 #define RRMOVXX 0x2
-#define RRMOVQ 0x20
-#define CMOVLE 0x21
-#define CMOVL  0x22
-#define CMOVE  0x23
-#define CMOVNE 0x24
-#define CMOVGE 0x25
-#define CMOVG  0x26
+#define RRMOVQ  0x00
+#define CMOVLE  0x01
+#define CMOVL   0x02
+#define CMOVE   0x03
+#define CMOVNE  0x04
+#define CMOVGE  0x05
+#define CMOVG   0x06
 
-#define IRMOVQ 0x30
-#define RMMOVQ 0x40
-#define MRMOVQ 0x50
+#define IRMOVQ 0x3
+#define RMMOVQ 0x4
+#define MRMOVQ 0x5
 
 #define OPQ    0x6
-#define ADDQ   0x60
-#define SUBQ   0x61
-#define ANDQ   0x62
-#define XORQ   0x63
+#define ADDQ   0x00
+#define SUBQ   0x01
+#define ANDQ   0x02
+#define XORQ   0x03
 
 #define JXX    0x7
-#define JMP    0x70
-#define JLE    0x71
-#define JL     0x72
-#define JE     0x73
-#define JNE    0x74
-#define JGE    0x75
-#define JG     0x76
+#define JMP    0x00
+#define JLE    0x01
+#define JL     0x02
+#define JE     0x03
+#define JNE    0x04
+#define JGE    0x05
+#define JG     0x06
 
-#define LTEQ   0x1
-#define LT     0x2
-#define EQ     0x3
-#define NEQ    0x4
-#define GTEQ   0x5
-#define GT     0x6
+#define LTEQ   0x01
+#define LT     0x02
+#define EQ     0x03
+#define NEQ    0x04
+#define GTEQ   0x05
+#define GT     0x06
 
-#define CALL   0x80
-#define RET    0x90
-#define PUSHQ  0xA0
-#define POPQ   0xB0
+#define CALL   0x8
+#define RET    0x9
+#define PUSHQ  0xA
+#define POPQ   0xB
 
 
 #define RAX         0x00
@@ -73,6 +73,10 @@
 #define R13         0x0D
 #define R14         0x0E
 #define NO_REGISTER 0x0F
+
+#define CODE_SEG  0x00100000 // lowest address: smallest (64kb-1mb)
+#define DATA_SEG  0x10000000 // second lowest address: small (64kb-256kb)
+#define STACK_SEG 0xFFFFFFF0 // highest address, grows down: biggest (256kb-4mb)
 
 #define SBIT(n) ((n) >> 63 & 1)
 
@@ -118,5 +122,10 @@ typedef struct {
     uint64_t A;
     uint64_t B;
 } reg;
+
+typedef uint8_t byte;
+
+uint64_t readFromMemory(uint8_t* RAM, uint64_t from, int bytesToRead);
+void writeToMemory(uint8_t* RAM, uint64_t value, uint64_t from);
 
 #endif //CPU_EMULATOR_CPU_H
