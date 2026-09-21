@@ -40,18 +40,18 @@ void fetchRegisters(CPU* cpu, byte* RAM, reg* reg) {
 void raiseException(CPU* cpu, int code) {
     cpu->stat = code;
     printCPUState(cpu);
-    printf("\n\n=====Exception raised=====\n");
-    exit(EXIT_FAILURE); // success ?
+    exit(EXIT_SUCCESS);
 }
 
 
 int fetch(CPU* cpu, uint8_t* RAM, val* val, reg* reg) { // needs some sort of assert for no-register (F)
 
-    if(cpu->PC < CODE_SEG || cpu->PC > DATA_SEG) raiseException(cpu, STAT_ADR);
+    if(cpu->PC < CODE_SEG || cpu->PC > DATA_SEG)
+        raiseException(cpu, STAT_ADR);
 
     const int instruction = readFromMemory(RAM, cpu->PC, 1);
-    const int ifun = instruction >> 4;
-    const int icode = instruction & 0x0F;
+    const int icode = instruction >> 4;
+    const int ifun = instruction & 0x0F;
 
     if(icode == HALT && ifun == 0x0) {}
     else if(icode == NOP  && ifun == 0x0) {
@@ -217,7 +217,7 @@ void execute(CPU* cpu, val* val, int icode, int ifun, bool* cond) {
             cpu->ZF = val->E == 0ULL;
             cpu->SF = SBIT(val->E);
         } break;
-        case JXX:   *cond = evalCond(cpu, icode); break;
+        case JXX:   *cond = evalCond(cpu, ifun); break;
         case CALL:  val->E = val->B - 8; break;
         case RET:   val->E = val->B + 8; break;
         case PUSHQ: val->E = val->B - 8; break;
@@ -249,7 +249,7 @@ void memory(uint8_t* RAM, val* val, int icode) { // missing exception for STAT_A
     switch(icode) {
         case RMMOVQ: writeToMemory(RAM, val->A, val->E);      break;
         case MRMOVQ: val->M = readFromMemory(RAM, val->E, 8); break;
-        case CALL:   writeToMemory(RAM, val->P, val->E);      break;
+        case CALL:   writeToMemory(RAM, __builtin_bswap64(val->P), val->E); break; // PC value needs to be little-endian'd before being written to memory
         case RET:    val->M = readFromMemory(RAM, val->A, 8); break;
         case PUSHQ:  writeToMemory(RAM, val->A, val->E);      break;
         case POPQ:   val->M = readFromMemory(RAM, val->A, 8); break;
@@ -259,9 +259,9 @@ void memory(uint8_t* RAM, val* val, int icode) { // missing exception for STAT_A
 }
 
 
-void writeback(CPU* cpu, val* val, reg* reg, bool cond, int ifun) {
+void writeback(CPU* cpu, val* val, reg* reg, bool cond, int icode) {
 
-    switch (ifun) {
+    switch (icode) {
         case RRMOVXX: if(cond) cpu->registers[reg->B] = val->E; break;
         case IRMOVQ:  cpu->registers[reg->B] = val->E; break;
         case MRMOVQ:  cpu->registers[reg->A] = val->M; break;
@@ -309,30 +309,32 @@ int main(int argc, char** argv) {
     }
     */
 
-
     FILE* src = fopen("../example_program.txt", "r");
     CPU cpu;
     reg reg;
     val val;
     bool cond;
     uint8_t* RAM = malloc(sizeof(uint8_t) * UINT32_MAX);
+    cpu.stat = STAT_AOK;
     cpu.PC = CODE_SEG;
     cpu.registers[RSP] = STACK_SEG;
 
-    int pos = CODE_SEG;
+    uint32_t pos = CODE_SEG;
     while(!feof(src)) {
         fscanf(src, "%2X", &RAM[pos++]);
     }
 
-    for (int i = CODE_SEG; i < CODE_SEG + pos; i++) { // iterates way too many times; should iterate over number of instructions, not number of bytes in source code
-        int instruction = fetch(&cpu, RAM, &val, &reg);
-        int icode = instruction >> 4;
-        int ifun = instruction & 0x0F;
+    // end position is pos. iterate until PC is around there somewhere. pos gets +1 per byte
+    while (cpu.PC < pos) { // implement cycles. somehow calculate no. of instructions
+        const int instruction = fetch(&cpu, RAM, &val, &reg);
+        const int icode = instruction >> 4;
+        const int ifun = instruction & 0x0F;
         decode(&cpu, &val, &reg, icode);
         execute(&cpu, &val, icode, ifun, &cond);
         memory(RAM, &val, icode); // still missing exception for STAT_ADR
-        writeback(&cpu, &val, &reg, cond, instruction);
-        PC(&cpu, &val, cond, instruction);
+        writeback(&cpu, &val, &reg, cond, icode);
+        PC(&cpu, &val, cond, icode);
+        printf("instruction: %X PC: %llX\n", instruction, cpu.PC);
     }
 
     printCPUState(&cpu);

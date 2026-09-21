@@ -12,7 +12,6 @@
 #define STAT_ADR 0x02 // invalid address
 #define STAT_INS 0x03 // invalid instruction
 
-
 #define HALT 0x0
 #define NOP  0x1
 
@@ -56,7 +55,6 @@
 #define PUSHQ  0xA
 #define POPQ   0xB
 
-
 #define RAX         0x00
 #define RCX         0x01
 #define RDX         0x02
@@ -74,7 +72,7 @@
 #define R14         0x0E
 #define NO_REGISTER 0x0F
 
-#define CODE_SEG  0x00100000 // lowest address: smallest (64kb-1mb)
+#define CODE_SEG  0x00000000 // lowest address: smallest (64kb-1mb)
 #define DATA_SEG  0x10000000 // second lowest address: small (64kb-256kb)
 #define STACK_SEG 0xFFFFFFF0 // highest address, grows down: biggest (256kb-4mb)
 
