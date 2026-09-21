@@ -324,8 +324,7 @@ int main(int argc, char** argv) {
         fscanf(src, "%2X", &RAM[pos++]);
     }
 
-    // end position is pos. iterate until PC is around there somewhere. pos gets +1 per byte
-    while (cpu.PC < pos) { // implement cycles. somehow calculate no. of instructions
+    while (cpu.PC < pos) {
         const int instruction = fetch(&cpu, RAM, &val, &reg);
         const int icode = instruction >> 4;
         const int ifun = instruction & 0x0F;
