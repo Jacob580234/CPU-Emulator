@@ -4,50 +4,42 @@
 #include <string.h>
 #include "CPU.h"
 
-void printBinary(uint64_t num) {
-    printf("\n");
-    for (int i = 0; i < 64; i++) {
-        if (i%8 == 0) printf(" ");
-        printf("%lld", num >> (63-i) & 1);
-    }
-    printf("\n");
-}
-
 
 void printCPUState(CPU* cpu) {
     char* registers[] = {
         "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
-        "R8 ",  "R9 ",  "R10", "R11", "R12", "R13", "R14"
+        "R8",  "R9",  "R10", "R11", "R12", "R13", "R14"
     };
 
-    printf("REGISTERS:\n");
+    printf("\nREGISTERS:\n");
     for (int i = 0; i < 15; i++) {
-        printf("%s: 0x%llX\n", registers[i], cpu->registers[i]);
+        printf("%-3s: 0x%llX\n", registers[i], cpu->registers[i]);
     }
     printf("PC : 0x%llX\n", cpu->PC);
     printf("\nFLAGS:\nZF: %u\nOF: %u\nSF: %u\n", cpu->ZF, cpu->OF, cpu->SF);
-    printf("\nSTATUS: 0x%X", cpu->stat+1);
+    printf("\nSTATUS: 0x%X\n", cpu->stat+1);
 }
 
 
-void fetchRegisters(CPU* cpu, byte* RAM, reg* reg) {
-    int registers = readFromMemory(RAM, cpu->PC, 1);
+void fetchRegisters(byte* RAM, reg* reg, uint64_t from) {
+    int registers = readFromMemory(RAM, from, 1);
     reg->A = registers >> 4;
     reg->B = registers & 0x0F;
 }
 
 
-void raiseException(CPU* cpu, int code) {
+void raiseException(CPU* cpu, int code, uint64_t cause) {
     cpu->stat = code;
     printCPUState(cpu);
+    printf("%s: 0x%02llX", code == STAT_INS || code == STAT_HLT ? "Instruction" : "Address", cause);
     exit(EXIT_SUCCESS);
 }
 
 
-int fetch(CPU* cpu, uint8_t* RAM, val* val, reg* reg) { // needs some sort of assert for no-register (F)
+int fetch(CPU* cpu, uint8_t* RAM, val* val, reg* reg) {
 
     if(cpu->PC < CODE_SEG || cpu->PC > DATA_SEG)
-        raiseException(cpu, STAT_ADR);
+        raiseException(cpu, STAT_ADR, cpu->PC);
 
     const int instruction = readFromMemory(RAM, cpu->PC, 1);
     const int icode = instruction >> 4;
@@ -57,14 +49,14 @@ int fetch(CPU* cpu, uint8_t* RAM, val* val, reg* reg) { // needs some sort of as
     else if(icode == NOP  && ifun == 0x0) {
         val->P = cpu->PC + 1;
     } else if(icode == RRMOVXX && (ifun == RRMOVQ || ifun == CMOVLE || ifun == CMOVL || ifun == CMOVE || ifun == CMOVNE || ifun == CMOVGE || ifun == CMOVG)) {
-        fetchRegisters(cpu, RAM, reg);
+        fetchRegisters(RAM, reg, cpu->PC + 1);
         val->P = cpu->PC + 2;
     } else if((icode == IRMOVQ || icode == RMMOVQ || icode == MRMOVQ) && ifun == 0x0) {
-        fetchRegisters(cpu, RAM, reg);
+        fetchRegisters(RAM, reg, cpu->PC + 1);
         val->C = readFromMemory(RAM, cpu->PC + 2, 8);
         val->P = cpu->PC + 10;
     } else if(icode == OPQ && (ifun == ADDQ || ifun == SUBQ || ifun == ANDQ || ifun == XORQ)) {
-        fetchRegisters(cpu, RAM, reg);
+        fetchRegisters(RAM, reg, cpu->PC + 1);
         val->P = cpu->PC + 2;
     } else if(icode == JXX && (ifun == JMP || ifun == JLE || ifun == JL || ifun == JE || ifun == JNE || ifun == JGE || ifun == JG)) {
         val->C = readFromMemory(RAM, cpu->PC + 1, 8);
@@ -75,10 +67,10 @@ int fetch(CPU* cpu, uint8_t* RAM, val* val, reg* reg) { // needs some sort of as
     } else if(icode == RET && ifun == 0x0) {
         val->P = cpu->PC + 1;
     } else if((icode == PUSHQ || icode == POPQ) && ifun == 0x0) {
-        fetchRegisters(cpu, RAM, reg);
+        fetchRegisters(RAM, reg, cpu->PC + 1);
         val->P = cpu->PC + 2;
     }
-    else raiseException(cpu, STAT_INS);
+    else raiseException(cpu, STAT_INS, instruction);
 
     return instruction;
 }
@@ -117,17 +109,18 @@ void decode(CPU* cpu, val* val, reg* reg, int icode) {
         } break;
         default: break;
     }
+
 }
 
 
 bool evalCond(CPU* cpu, int ifun) {
     switch (ifun) {
-        case LTEQ: return ((cpu->SF ^ cpu->OF) | cpu->ZF)       & 1;
-        case LT:   return (cpu->SF ^ cpu->OF)                   & 1;
-        case EQ:   return (cpu->ZF)                             & 1;
-        case NEQ:  return (~cpu->ZF)                            & 1;
-        case GTEQ: return (~(cpu->SF ^ cpu->OF))                & 1;
-        case GT:   return (~(cpu->SF ^ cpu->OF) & ~cpu->ZF)     & 1;
+        case LTEQ: return  cpu->SF ^ cpu->OF | cpu->ZF;
+        case LT:   return  cpu->SF ^ cpu->OF;
+        case EQ:   return  cpu->ZF;
+        case NEQ:  return !cpu->ZF;
+        case GTEQ: return !(cpu->SF ^ cpu->OF);
+        case GT:   return !(cpu->SF ^ cpu->OF) & !cpu->ZF;
         default: __builtin_unreachable();
     }
 }
@@ -153,15 +146,13 @@ uint64_t addq(uint64_t b, uint64_t a, CPU* cpu) { // TODO: clean up
         }
     }
 
-    cpu->OF = SBIT(a) == SBIT(b) && SBIT(a) != SBIT(result);
+    cpu->OF = !(SBIT(a) ^ SBIT(b)) & (SBIT(a) ^ SBIT(result));
     return result;
 }
 
 
 uint64_t subq(uint64_t b, uint64_t a, CPU* cpu) {
-    uint64_t result = addq(~b + 1, a, cpu);
-    cpu->OF = SBIT(a) != SBIT(b) && SBIT(a) != SBIT(result); // not same as a or b?
-    return result;
+    return addq(b, ~a + 1, cpu);
 }
 
 
@@ -196,7 +187,7 @@ uint64_t xorq(uint64_t b, uint64_t a, CPU* cpu) {
 void execute(CPU* cpu, val* val, int icode, int ifun, bool* cond) {
 
     switch (icode) {
-        case HALT: raiseException(cpu, STAT_HLT);
+        case HALT: raiseException(cpu, STAT_HLT, 0x00);
         case RRMOVXX: {
             val->E = val->A;
             if(ifun != RRMOVQ) *cond = evalCond(cpu, ifun);
@@ -239,7 +230,7 @@ uint64_t readFromMemory(uint8_t* RAM, uint64_t from, int bytesToRead) {
 
 void writeToMemory(uint8_t* RAM, uint64_t value, uint64_t from) {
     for (int i = 0; i < 8; i++) {
-        RAM[from + (7-i)] = (value >> i*8) & 0xFF; // writes value to memory as-is
+        RAM[from + i] = (value >> i*8) & 0xFF; // little-endian
     }
 }
 
@@ -249,7 +240,7 @@ void memory(uint8_t* RAM, val* val, int icode) { // missing exception for STAT_A
     switch(icode) {
         case RMMOVQ: writeToMemory(RAM, val->A, val->E);      break;
         case MRMOVQ: val->M = readFromMemory(RAM, val->E, 8); break;
-        case CALL:   writeToMemory(RAM, __builtin_bswap64(val->P), val->E); break; // PC value needs to be little-endian'd before being written to memory
+        case CALL:   writeToMemory(RAM, val->P, val->E);      break;
         case RET:    val->M = readFromMemory(RAM, val->A, 8); break;
         case PUSHQ:  writeToMemory(RAM, val->A, val->E);      break;
         case POPQ:   val->M = readFromMemory(RAM, val->A, 8); break;
@@ -314,6 +305,7 @@ int main(int argc, char** argv) {
     reg reg;
     val val;
     bool cond;
+    memset(&cpu, 0, sizeof(CPU));
     uint8_t* RAM = malloc(sizeof(uint8_t) * UINT32_MAX);
     cpu.stat = STAT_AOK;
     cpu.PC = CODE_SEG;
@@ -333,7 +325,6 @@ int main(int argc, char** argv) {
         memory(RAM, &val, icode); // still missing exception for STAT_ADR
         writeback(&cpu, &val, &reg, cond, icode);
         PC(&cpu, &val, cond, icode);
-        printf("instruction: %X PC: %llX\n", instruction, cpu.PC);
     }
 
     printCPUState(&cpu);
